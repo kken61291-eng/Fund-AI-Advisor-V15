@@ -1,0 +1,33 @@
+global:
+  base_invest_amount: 1000   # 单次基准定投金额
+  max_daily_invest: 5000     # 单日最大买入金额 (重仓上限)
+  risk_control:              # [V15 新增] 风控参数
+    volatility_window: 20    # 计算波动率的窗口(天)
+    fuse_level_1_drop: -0.02 # 一级熔断: 标的跌幅阈值
+    fuse_level_2_drop: -0.04 # 二级熔断: 标的跌幅阈值
+    fuse_level_3_drop: -0.06 # 三级熔断: 标的跌幅阈值 (强制空仓)
+
+funds:
+  - name: "半导体ETF"
+    code: "512480"
+    strategy_type: "trend"   # 策略类型: trend(趋势), value(价值), dividend(红利)
+    index_name: "半导体"      # 用于估值查询
+    sector_keyword: "半导体 芯片 集成电路" # 用于新闻搜索
+
+  - name: "纳指科技ETF"
+    code: "159509"
+    strategy_type: "trend"
+    index_name: "纳斯达克"
+    sector_keyword: "美股 纳斯达克 科技股"
+
+  - name: "沪深300ETF"
+    code: "510300"
+    strategy_type: "core"
+    index_name: "沪深300"
+    sector_keyword: "A股 核心资产 茅指数"
+
+  - name: "红利ETF"
+    code: "510880"
+    strategy_type: "dividend"
+    index_name: "红利指数"
+    sector_keyword: "红利 高股息 煤炭 银行"
