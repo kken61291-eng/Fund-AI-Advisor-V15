@@ -27,29 +27,20 @@ class DataFetcher:
 
     @retry(retries=2, delay=2)
     def get_market_volatility(self, window=20):
-        """
-        [V15 新增] 获取市场波动率 (基于沪深300)
-        用于动态调整风控阈值
-        """
+        """[V15] 获取市场波动率"""
         try:
-            # 获取沪深300历史数据
             df = ak.stock_zh_index_daily(symbol="sh000300")
-            if df.empty: return 0.015 # 默认低波动
-
+            if df.empty: return 0.015
             df['close'] = pd.to_numeric(df['close'])
-            # 计算日收益率
             df['pct_change'] = df['close'].pct_change()
-            # 计算滚动标准差 (波动率)
             volatility = df['pct_change'].tail(window).std()
-            
             logger.info(f"🌊 [市场环境] 沪深300 近{window}日波动率: {volatility:.2%}")
             return volatility
-        except Exception as e:
-            logger.warning(f"波动率获取失败，使用默认值: {e}")
-            return 0.02
+        except Exception:
+            return 0.015
 
     def _fetch_realtime_candle(self, code):
-        """V14.28 实时快照获取"""
+        """V14.28 实时快照"""
         try:
             df_spot = ak.stock_zh_a_spot_em()
             target = df_spot[df_spot['代码'] == code]
@@ -73,23 +64,22 @@ class DataFetcher:
 
     @retry(retries=2, delay=3)
     def get_fund_history(self, code):
-        """V14.28 历史数据 + 实时缝合"""
+        """V14 完整兜底逻辑: 东财 -> 新浪 -> Yahoo"""
         time.sleep(random.uniform(1.0, 2.0))
         df_hist = None
 
-        # 1. AkShare (东财)
+        # 1. 东财
         try:
             df = ak.fund_etf_hist_em(symbol=code, period="daily", start_date="20200101", end_date="20500101")
             if not df.empty:
                 df = df.rename(columns={"日期": "date", "收盘": "close", "最高": "high", "最低": "low", "开盘": "open", "成交量": "volume"})
                 df['date'] = pd.to_datetime(df['date'])
                 df.set_index('date', inplace=True)
-                if df.index.tz is not None: df.index = df.index.tz_localize(None)
                 df_hist = df
         except Exception as e:
             logger.warning(f"东财源微瑕 {code}: {str(e)[:50]}")
 
-        # 2. AkShare (新浪兜底)
+        # 2. 新浪兜底
         if df_hist is None or df_hist.empty:
             try:
                 symbol = f"sh{code}" if code.startswith('5') or code.startswith('6') else f"sz{code}"
@@ -98,20 +88,31 @@ class DataFetcher:
                     df = df.rename(columns={"date": "date", "close": "close", "high": "high", "low": "low", "open": "open", "volume": "volume"})
                     df['date'] = pd.to_datetime(df['date'])
                     df.set_index('date', inplace=True)
-                    if df.index.tz is not None: df.index = df.index.tz_localize(None)
                     df_hist = df
             except Exception:
+                pass
+        
+        # 3. Yahoo 兜底 (V15 保留)
+        if (df_hist is None or df_hist.empty) and yf:
+            try:
+                suffix = ".SS" if code.startswith('5') or code.startswith('6') else ".SZ"
+                tk = yf.Ticker(code + suffix)
+                df = tk.history(period="1y")
+                if not df.empty:
+                    df = df.rename(columns={"Close": "close", "High": "high", "Low": "low", "Open": "open", "Volume": "volume"})
+                    df.index = df.index.tz_localize(None)
+                    df_hist = df
+            except:
                 pass
 
         if df_hist is None or df_hist.empty: return None
 
-        # 3. 实时缝合
+        # 实时缝合
         if self._is_trading_time():
             real_candle = self._fetch_realtime_candle(code)
             if real_candle is not None:
                 last_date = df_hist.index[-1]
                 today_date = pd.Timestamp(real_candle['date'])
-                
                 if last_date != today_date:
                     df_real = pd.DataFrame([real_candle]).set_index('date')
                     df_hist = pd.concat([df_hist, df_real])
