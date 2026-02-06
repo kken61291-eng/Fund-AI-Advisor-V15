@@ -2,7 +2,6 @@ name: Daily AI Fund Advisor V15 (Iron Fist)
 
 on:
   # 1. 定时触发：北京时间 14:20 (UTC 06:20)
-  # 此时A股已交易230分钟，量能投影误差最小，且留有40分钟人工操作时间
   schedule:
     - cron: '20 6 * * 1-5'
 
@@ -13,45 +12,39 @@ jobs:
   run_advisor:
     runs-on: ubuntu-latest
     
-    # 设置时区，这对 V15 的时间判断至关重要
     env:
       TZ: Asia/Shanghai
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4  # 升级到 v4
 
     - name: Set up Python 3.10
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5 # 升级到 v5
       with:
         python-version: "3.10"
-        cache: 'pip' # 开启缓存，加速依赖安装
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # 安装 V15 核心依赖 (去除了 pandas_ta，增加了 ta)
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Run V15 Iron Fist Advisor
       env:
-        # 必须在新仓库的 Settings -> Secrets 中重新配置这些密钥
         LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
-        LLM_MODEL: ${{ secrets.LLM_MODEL }} # 例如: Pro/moonshotai/Kimi-K2.5
+        LLM_MODEL: ${{ secrets.LLM_MODEL }}
         MAIL_USER: ${{ secrets.MAIL_USER }}
         MAIL_PASS: ${{ secrets.MAIL_PASS }}
-        # 如果需要 Tushare 或其他 Token 也在这里配置
-        # TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }} 
       run: |
         python main.py
         
     - name: Archive Portfolio Data
-      # 上传持仓文件作为构件，防止 GitHub Action 重置导致持仓丢失
-      # (注意：生产环境建议使用 Git Commit 回写或外部数据库，这里仅做简单归档)
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4  # 核心修复：升级到 v4
       with:
         name: portfolio-data
         path: portfolio.json
         retention-days: 90
+        overwrite: true # v4 新增参数，允许覆盖旧构件，避免报错
