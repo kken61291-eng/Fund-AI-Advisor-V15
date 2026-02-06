@@ -5,10 +5,11 @@ import time
 import functools
 from email.mime.text import MIMEText
 from email.header import Header
+from email.utils import formataddr # [新增] 用于构建标准的邮件地址格式
 from datetime import datetime, timedelta
 import pytz
 
-# 配置日志格式 (V15 标准化)
+# 配置日志格式
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(module)s] - %(levelname)s - %(message)s',
@@ -50,7 +51,11 @@ def send_email(subject, content):
         return
 
     message = MIMEText(content, 'html', 'utf-8')
-    message['From'] = Header("玄铁量化 V15", 'utf-8')
+    
+    # [修复核心] 使用 formataddr 构建符合 RFC 标准的发件人头
+    # 格式效果: "玄铁量化 V15 <123456@qq.com>"
+    message['From'] = formataddr(("玄铁量化 V15", sender))
+    
     message['To'] = Header("Commander", 'utf-8')
     message['Subject'] = Header(subject, 'utf-8')
 
