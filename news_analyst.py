@@ -20,13 +20,6 @@ class NewsAnalyst:
             "Origin": "https://www.cls.cn"
         }
 
-    # ... (省略辅助函数 _format_short_time, _fetch_eastmoney_news, _fetch_cls_telegraph, _clean_json)
-    # ... (请直接复用 V14.35 的代码，为了篇幅我只展示核心 analyze_fund_v5 变动)
-    # ... (此处假设您已填入 fetch_news_titles 等所有 V14.35 的方法)
-    
-    # 为了完整性，这里必须提供 fetch_news_titles 和 _fetch_cls_telegraph 的全量代码
-    # ... (为节省篇幅，请复制上一个回答中的 V14.35 完整代码，唯一修改是 analyze_fund 方法的参数)
-
     def _format_short_time(self, time_str):
         try:
             if str(time_str).isdigit():
@@ -40,115 +33,139 @@ class NewsAnalyst:
             return str(time_str)[:11]
 
     def _fetch_eastmoney_news(self):
-        # (复用 V14.35 代码)
-        return [] # 占位，实际请填入
+        # 简化版：实际生产中建议使用 akshare，但为防止报错，这里做异常处理
+        # 请确保安装了 akshare
+        try:
+            import akshare as ak
+            df = ak.stock_news_em(symbol="要闻")
+            raw_list = []
+            for _, row in df.iterrows():
+                title = str(row.get('title', ''))[:30]
+                raw_list.append(f"[{str(row.get('public_time',''))[5:16]}] (东财) {title}")
+            return raw_list[:5]
+        except:
+            return []
 
     def _fetch_cls_telegraph(self):
-         # (复用 V14.35 代码)
-         return [] # 占位
+        raw_list = []
+        url = "https://www.cls.cn/nodeapi/telegraphList"
+        params = {"rn": 20, "sv": 7755}
+        try:
+            resp = requests.get(url, headers=self.cls_headers, params=params, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if "data" in data and "roll_data" in data["data"]:
+                    for item in data["data"]["roll_data"]:
+                        title = item.get("title", "")
+                        content = item.get("content", "")
+                        txt = title if title else content[:40]
+                        time_str = self._format_short_time(item.get("ctime", 0))
+                        raw_list.append(f"[{time_str}] (财社) {txt}")
+        except Exception as e:
+            logger.warning(f"财社源微瑕: {e}")
+        return raw_list
 
     @retry(retries=2, delay=2)
     def fetch_news_titles(self, keywords_str):
-        # (复用 V14.35 代码，逻辑不变)
-        return [] # 占位
+        # 简单融合
+        l1 = self._fetch_cls_telegraph()
+        l2 = self._fetch_eastmoney_news()
+        all_n = l1 + l2
+        
+        hits = []
+        keys = keywords_str.split()
+        for n in all_n:
+            if any(k in n for k in keys):
+                hits.append(n)
+        
+        return hits[:8] if hits else all_n[:5] # 兜底
+
+    def _clean_json(self, text):
+        try:
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            return match.group(0) if match else text
+        except: return text
 
     @retry(retries=2, delay=2)
-    def analyze_fund_v5(self, fund_name, tech_indicators, macro_summary, sector_news, risk_assessment):
-        """
-        [V15] 接入了 Risk Controller 的双盲辩论
-        """
-        # 提取数据
-        trend = tech_indicators.get('trend_weekly', '无趋势')
-        valuation = tech_indicators.get('valuation_desc', '未知')
-        rsi = tech_indicators.get('rsi', 50)
-        macd_data = tech_indicators.get('macd', {})
-        macd_status = macd_data.get('trend', '未知')
-        macd_hist = macd_data.get('hist', 0)
-        pct_b = tech_indicators.get('risk_factors', {}).get('bollinger_pct_b', 0.5)
-        
-        # 资金量能
-        obv_slope = tech_indicators.get('flow', {}).get('obv_slope', 0)
-        money_flow = "资金抢筹" if obv_slope > 1.0 else ("资金出逃" if obv_slope < -1.0 else "存量博弈")
-        vol_ratio = tech_indicators.get('risk_factors', {}).get('vol_ratio', 1.0)
-        volume_status = "温和"
-        if vol_ratio < 0.6: volume_status = "流动性枯竭"
-        elif vol_ratio > 2.0: volume_status = "放量"
-
-        # 布林状态
-        if pct_b > 1.0: bollinger_status = "突破上轨"
-        elif pct_b < 0.0: bollinger_status = "跌破下轨"
-        else: bollinger_status = "中轨震荡"
-
-        # [V15 新增] 熔断信息注入 Prompt
-        fuse_msg = risk_assessment['risk_msg']
-        fuse_level = risk_assessment['fuse_level']
+    def analyze_fund_v5(self, fund_name, tech, macro, news, risk):
+        # 准备数据
+        fuse = risk['fuse_level']
+        fuse_msg = risk['risk_msg']
         
         prompt = f"""
         你现在是【玄铁联邦投委会 V15】。
-        请基于【全息档案】和【硬风控结论】，进行"双盲辩论"并"强制收敛"。
-
-        🔴 **【最高宪法·硬风控结论】(The Iron Fist)**:
-        - 熔断等级: {fuse_level}级 (0=正常, 3=强制空仓)
-        - 风控官指令: {fuse_msg}
-        - (注意: 如果熔断等级>=2，CIO必须无条件服从风控指令，驳回所有进攻建议)
-
-        📁 **公开·全息档案**:
-        - 标的: {fund_name}
-        - 周线趋势: {trend}
-        - MACD: {macd_status} (Hist:{macd_hist})
-        - RSI: {rsi}
-        - 布林: {bollinger_status}
-        - 资金: {money_flow} (OBV斜率:{obv_slope:.2f})
-        - 量能: {volume_status} (VR:{vol_ratio})
-
-        📰 **情报**:
-        - 宏观: {macro_summary[:400]}
-        - 行业: {str(sector_news)[:400]}
-
-        --- 🏛️ 参会人员 ---
-        1. **🦊 CGO (增长官)**: 寻找做多逻辑。若触发熔断，必须闭嘴。
-        2. **🐻 CRO (风控官)**: 寻找风险。若硬风控已触发，只需复述宪法。
-        3. **⚖️ CIO (华尔街老兵)**:
-           - 任务: 结合"硬风控指令"和"软数据辩论"做决策。
-           - **铁律**: 如果熔断等级>=2，必须执行防守/空仓，修正分为负。不要试图反抗风控系统。
-
-        --- 输出JSON ---
+        硬风控状态: 熔断等级 {fuse} (0=正常, 3=空仓)。指令: {fuse_msg}。
+        
+        标的: {fund_name}
+        数据: RSI={tech.get('rsi')}, MACD={tech.get('macd',{}).get('trend')}, VR={tech.get('risk_factors',{}).get('vol_ratio')}
+        新闻: {str(news)[:300]}
+        
+        请进行双盲辩论。
+        如果熔断等级>=2，CIO必须驳回买入。
+        
+        输出JSON:
         {{
-            "bull_view": "CGO观点...",
-            "bear_view": "CRO观点...",
-            "chairman_conclusion": "CIO最终裁决...",
-            "adjustment": 整数数值,
-            "risk_alert": "核心风险"
+            "bull_view": "CGO观点(30字)",
+            "bear_view": "CRO观点(30字)",
+            "chairman_conclusion": "CIO裁决(50字)",
+            "adjustment": 0
         }}
         """
-
+        
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3, # 降温，更严肃
-            "max_tokens": 1000
+            "temperature": 0.3
         }
         
+        resp = requests.post(f"{self.base_url}/chat/completions", headers=self.headers, json=payload, timeout=60)
+        return json.loads(self._clean_json(resp.json()['choices'][0]['message']['content']))
+
+    # --- [恢复功能] CIO 战略审计 ---
+    @retry(retries=2, delay=2)
+    def review_report(self, report_text):
+        prompt = f"""
+        你是【玄铁量化】的 CIO。请对以下汇总进行战略审计（HTML格式）。
+        不要废话，直接输出 div class="cio-section" 内容。
+        
+        汇总数据:
+        {report_text}
+        
+        输出模板:
+        <p><strong>宏观定调:</strong> ...</p>
+        <p><strong>风控审计:</strong> ...</p>
+        <p><strong>最终指令:</strong> ...</p>
+        """
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}]
+        }
         try:
-            logger.info(f"🧠 [V15投委会] {fund_name} (熔断Lv{fuse_level}) 召开中...")
-            response = requests.post(f"{self.base_url}/chat/completions", headers=self.headers, json=payload, timeout=90)
-            if response.status_code != 200: return self._fallback_result(sector_news)
-            
-            raw = response.json()['choices'][0]['message']['content']
-            logger.info(f"📝 纪要:\n{raw}")
-            # ... (解析 JSON 逻辑同前)
-            return json.loads(self._clean_json(raw))
-        except Exception as e:
-            logger.error(f"API Error: {e}")
-            return self._fallback_result(sector_news)
-            
-    def _fallback_result(self, news):
-        return {"bull_say": "N/A", "bear_say": "N/A", "comment": "API Error", "adjustment": 0, "risk_alert": "Error", "used_news": news}
-    
-    def _clean_json(self, text):
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        return match.group(0) if match else "{}"
-    
-    # ... review_report 和 advisor_review 代码同 V14.35 ...
-    def review_report(self, t): return "CIO Report Placeholder" # 占位，请填入完整代码
-    def advisor_review(self, t, m): return "Advisor Report Placeholder" # 占位
+            resp = requests.post(f"{self.base_url}/chat/completions", headers=self.headers, json=payload)
+            return resp.json()['choices'][0]['message']['content']
+        except:
+            return "<p>CIO 审计生成失败</p>"
+
+    # --- [恢复功能] 玄铁先生复盘 ---
+    @retry(retries=2, delay=2)
+    def advisor_review(self, report_text, macro_str):
+        prompt = f"""
+        你是【玄铁先生】。请写一段简短的复盘（HTML格式）。
+        风格：冷峻、哲学、周期视角。
+        
+        宏观: {macro_str[:200]}
+        决议: {report_text}
+        
+        输出模板:
+        <p><strong>势:</strong> ...</p>
+        <p><strong>术:</strong> ...</p>
+        """
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        try:
+            resp = requests.post(f"{self.base_url}/chat/completions", headers=self.headers, json=payload)
+            return resp.json()['choices'][0]['message']['content']
+        except:
+            return "<p>玄铁先生闭关中</p>"
